@@ -188,13 +188,31 @@ let micDataArray = null;
 let mixAudioContext = null;
 let outputWidth = 1920;
 let outputHeight = 1080;
+const hasMediaDevices = typeof navigator !== 'undefined' && !!navigator.mediaDevices;
+const canCaptureDisplay = hasMediaDevices && typeof navigator.mediaDevices.getDisplayMedia === 'function';
 
 // Custom drag position (normalized 0-1 relative to canvas)
 let customX = 0.9;
 let customY = 0.9;
 let dragging = false;
 
+function setUnsupportedCaptureState() {
+  startBtn.disabled = true;
+  statusEl.textContent = 'Screen capture is not available in this runtime.';
+  hintEl.textContent = 'Rebuild NoCap with the latest config and relaunch. If needed, update macOS and grant Screen Recording permission in System Settings.';
+}
+
+if (!canCaptureDisplay) {
+  setUnsupportedCaptureState();
+}
+
 async function loadDevices() {
+  if (!hasMediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+    webcamSelect.innerHTML = '<option value="none">None (media API unavailable)</option>';
+    micSelect.innerHTML = '<option value="default">Default mic</option>';
+    return;
+  }
+
   try {
     const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     tempStream.getTracks().forEach(t => t.stop());
@@ -238,6 +256,11 @@ async function ensureVideoReady(videoEl) {
 }
 
 async function setupMicMonitor() {
+  if (!hasMediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+    micLabel.textContent = 'Microphone unavailable in this runtime';
+    return;
+  }
+
   if (micStream) micStream.getTracks().forEach(t => t.stop());
   if (micMonitorRaf) cancelAnimationFrame(micMonitorRaf);
   if (audioContext) {
@@ -497,6 +520,11 @@ layoutSelect.closest('label').style.display = outputSelect.value === 'free' ? 'n
 
 startBtn.addEventListener('click', async () => {
   try {
+    if (!canCaptureDisplay) {
+      setUnsupportedCaptureState();
+      return;
+    }
+
     if (audioContext && audioContext.state === 'suspended') {
       await audioContext.resume();
     }

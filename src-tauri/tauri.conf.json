@@ -14,7 +14,8 @@
         "width": 1100,
         "height": 750,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "useHttpsScheme": true
       }
     ],
     "security": {

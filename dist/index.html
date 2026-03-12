@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NoCap - Screen Recorder</title>
+<script src="https://cdn.jsdelivr.net/npm/fix-webm-duration@1.0.6/fix-webm-duration.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0a0a0a; color: #e0e0e0;
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; min-height: 100vh; gap: 20px;
+  }
+  h1 { font-size: 1.4rem; font-weight: 600; color: #fff; }
+  .controls { display: flex; gap: 12px; align-items: center; }
+  button {
+    padding: 10px 24px; border: none; border-radius: 8px;
+    font-size: 0.95rem; font-weight: 500; cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  button:hover { opacity: 0.85; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #startBtn { background: #e53e3e; color: #fff; }
+  #stopBtn { background: #555; color: #fff; }
+  #downloadBtn { background: #38a169; color: #fff; display: none; }
+  #toggleWebcamBtn { background: #2d3748; color: #fff; }
+  #toggleWebcamBtn.off { background: #555; }
+  .preview-container {
+    position: relative; background: #111; border-radius: 12px;
+    overflow: hidden; border: 1px solid #222; cursor: default;
+  }
+  canvas {
+    display: block; max-width: 90vw; max-height: 70vh;
+    border-radius: 12px;
+  }
+  .status {
+    font-size: 0.85rem; color: #888; min-height: 1.2em;
+  }
+  .recording-dot {
+    display: inline-block; width: 8px; height: 8px;
+    background: #e53e3e; border-radius: 50%; margin-right: 6px;
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; } 50% { opacity: 0.3; }
+  }
+  .settings {
+    display: flex; gap: 16px; align-items: center; font-size: 0.85rem;
+    flex-wrap: wrap; justify-content: center;
+  }
+  .settings label { display: flex; align-items: center; gap: 6px; color: #aaa; }
+  select {
+    background: #1a1a1a; color: #ccc; border: 1px solid #333;
+    padding: 4px 8px; border-radius: 4px; font-size: 0.85rem;
+  }
+  input[type="range"] { width: 80px; accent-color: #e53e3e; }
+  .hint { font-size: 0.75rem; color: #555; }
+  .mic-indicator {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 0.8rem; color: #aaa;
+    padding: 6px 10px; border: 1px solid #222; border-radius: 999px;
+    background: #111;
+  }
+  .mic-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #555; transition: background 0.12s ease, box-shadow 0.12s ease;
+  }
+  .mic-dot.live {
+    background: #38a169;
+    box-shadow: 0 0 0 4px rgba(56, 161, 105, 0.18);
+  }
+  .mic-meter {
+    width: 72px; height: 6px; border-radius: 999px;
+    background: #222; overflow: hidden;
+  }
+  .mic-meter-fill {
+    width: 0%; height: 100%;
+    background: linear-gradient(90deg, #38a169, #ecc94b, #e53e3e);
+    transition: width 0.08s linear;
+  }
+</style>
+</head>
+<body>
+
+<h1>NoCap</h1>
+
+<div class="settings">
+  <label>
+    Webcam:
+    <select id="webcamSelect"><option value="">Loading...</option></select>
+  </label>
+  <label>
+    Mic:
+    <select id="micSelect"><option value="">Loading...</option></select>
+  </label>
+  <label>
+    Position:
+    <select id="positionSelect">
+      <option value="bottom-right" selected>Bottom Right</option>
+      <option value="bottom-left">Bottom Left</option>
+      <option value="top-right">Top Right</option>
+      <option value="top-left">Top Left</option>
+      <option value="custom">Custom (drag)</option>
+    </select>
+  </label>
+  <label>Size: <input type="range" id="webcamSize" min="60" max="400" value="160" step="8"></label>
+  <label>
+    Output:
+    <select id="outputSelect">
+      <option value="1920x1080">YouTube / Website (16:9)</option>
+      <option value="1080x1920">TikTok / Reels (9:16)</option>
+      <option value="1080x1080">Square (1:1)</option>
+      <option value="1080x1350">Instagram Portrait (4:5)</option>
+      <option value="free" selected>Free (native)</option>
+    </select>
+  </label>
+  <label>
+    Layout:
+    <select id="layoutSelect">
+      <option value="blur-fit" selected>Blurred Background</option>
+      <option value="solid-fit">Letterbox</option>
+      <option value="crop-fill">Fill / Crop</option>
+    </select>
+  </label>
+</div>
+
+<div class="controls">
+  <button id="startBtn">Start Recording</button>
+  <button id="stopBtn" disabled>Stop</button>
+  <button id="toggleWebcamBtn" class="off">Show Webcam</button>
+  <button id="downloadBtn">Download</button>
+</div>
+
+<div class="mic-indicator" id="micIndicator">
+  <span class="mic-dot" id="micDot"></span>
+  <span id="micLabel">Checking microphone...</span>
+  <span class="mic-meter"><span class="mic-meter-fill" id="micMeterFill"></span></span>
+</div>
+
+<div class="status" id="status">Select your screen and webcam, then hit record.</div>
+<div class="hint" id="hint"></div>
+
+<div class="preview-container" id="previewContainer">
+  <canvas id="canvas" width="1280" height="720"></canvas>
+</div>
+
+<video id="screenVideo" autoplay muted playsinline style="display:none"></video>
+<video id="webcamVideo" autoplay muted playsinline style="display:none"></video>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const screenVideo = document.getElementById('screenVideo');
+const webcamVideo = document.getElementById('webcamVideo');
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+const downloadBtn = document.getElementById('downloadBtn');
+const toggleWebcamBtn = document.getElementById('toggleWebcamBtn');
+const statusEl = document.getElementById('status');
+const hintEl = document.getElementById('hint');
+const webcamSelect = document.getElementById('webcamSelect');
+const micSelect = document.getElementById('micSelect');
+const positionSelect = document.getElementById('positionSelect');
+const webcamSizeInput = document.getElementById('webcamSize');
+const previewContainer = document.getElementById('previewContainer');
+const micDot = document.getElementById('micDot');
+const micLabel = document.getElementById('micLabel');
+const micMeterFill = document.getElementById('micMeterFill');
+const outputSelect = document.getElementById('outputSelect');
+const layoutSelect = document.getElementById('layoutSelect');
+
+let mediaRecorder = null;
+let chunks = [];
+let screenStream = null;
+let webcamStream = null;
+let micStream = null;
+let animFrameId = null;
+let recordingBlob = null;
+let recordingStartTime = 0;
+let webcamVisible = false;
+let micMonitorRaf = null;
+let audioContext = null;
+let micAnalyser = null;
+let micDataArray = null;
+let mixAudioContext = null;
+let outputWidth = 1920;
+let outputHeight = 1080;
+
+// Custom drag position (normalized 0-1 relative to canvas)
+let customX = 0.9;
+let customY = 0.9;
+let dragging = false;
+
+async function loadDevices() {
+  try {
+    const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    tempStream.getTracks().forEach(t => t.stop());
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoDevices = devices.filter(d => d.kind === 'videoinput');
+    const audioDevices = devices.filter(d => d.kind === 'audioinput');
+
+    webcamSelect.innerHTML = '<option value="none">None</option>';
+    videoDevices.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d.deviceId;
+      opt.textContent = d.label || `Camera ${webcamSelect.children.length}`;
+      webcamSelect.appendChild(opt);
+    });
+    if (videoDevices.length > 0) webcamSelect.value = videoDevices[0].deviceId;
+
+    micSelect.innerHTML = '<option value="default">Default</option>';
+    audioDevices.forEach((d, index) => {
+      const opt = document.createElement('option');
+      opt.value = d.deviceId;
+      opt.textContent = d.label || `Microphone ${index + 1}`;
+      micSelect.appendChild(opt);
+    });
+  } catch {
+    webcamSelect.innerHTML = '<option value="none">None (no permission)</option>';
+    micSelect.innerHTML = '<option value="default">Default mic</option>';
+  }
+}
+loadDevices();
+
+async function ensureVideoReady(videoEl) {
+  if (!videoEl.srcObject) return;
+  if (videoEl.readyState < 2) {
+    await new Promise(resolve => {
+      videoEl.onloadedmetadata = () => resolve();
+    });
+  }
+  try {
+    await videoEl.play();
+  } catch {}
+}
+
+async function setupMicMonitor() {
+  if (micStream) micStream.getTracks().forEach(t => t.stop());
+  if (micMonitorRaf) cancelAnimationFrame(micMonitorRaf);
+  if (audioContext) {
+    try { await audioContext.close(); } catch {}
+  }
+  try {
+    const selectedMic = micSelect.value && micSelect.value !== 'default'
+      ? { deviceId: { exact: micSelect.value } }
+      : true;
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        ...(selectedMic === true ? {} : selectedMic),
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      }
+    });
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const source = audioContext.createMediaStreamSource(micStream);
+    micAnalyser = audioContext.createAnalyser();
+    micAnalyser.fftSize = 256;
+    micDataArray = new Uint8Array(micAnalyser.frequencyBinCount);
+    source.connect(micAnalyser);
+    micLabel.textContent = 'Microphone ready';
+    monitorMicLevel();
+  } catch {
+    micLabel.textContent = 'Microphone unavailable';
+  }
+}
+
+micSelect.addEventListener('change', () => {
+  micLabel.textContent = 'Switching microphone...';
+  setupMicMonitor();
+});
+
+function monitorMicLevel() {
+  if (!micAnalyser || !micDataArray) return;
+  micAnalyser.getByteFrequencyData(micDataArray);
+  let sum = 0;
+  for (const v of micDataArray) sum += v;
+  const avg = sum / micDataArray.length;
+  const normalized = Math.min(1, avg / 90);
+  micMeterFill.style.width = `${Math.round(normalized * 100)}%`;
+  micDot.classList.toggle('live', normalized > 0.08);
+  micMonitorRaf = requestAnimationFrame(monitorMicLevel);
+}
+
+setupMicMonitor();
+
+// Toggle webcam
+toggleWebcamBtn.addEventListener('click', () => {
+  webcamVisible = !webcamVisible;
+  toggleWebcamBtn.textContent = webcamVisible ? 'Hide Webcam' : 'Show Webcam';
+  toggleWebcamBtn.classList.toggle('off', !webcamVisible);
+});
+
+// Dragging webcam bubble on the preview canvas
+function canvasCoords(e) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return {
+    x: (e.clientX - rect.left) * scaleX,
+    y: (e.clientY - rect.top) * scaleY
+  };
+}
+
+previewContainer.addEventListener('mousedown', (e) => {
+  if (!webcamVisible || !webcamVideo.srcObject) return;
+  const { x, y } = canvasCoords(e);
+  const radius = parseInt(webcamSizeInput.value) / 2;
+  const { cx, cy } = getWebcamCenter();
+  const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
+  if (dist <= radius) {
+    dragging = true;
+    positionSelect.value = 'custom';
+    hintEl.textContent = 'Dragging webcam...';
+    e.preventDefault();
+  }
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!dragging) return;
+  const { x, y } = canvasCoords(e);
+  customX = Math.max(0, Math.min(1, x / canvas.width));
+  customY = Math.max(0, Math.min(1, y / canvas.height));
+});
+
+window.addEventListener('mouseup', () => {
+  if (dragging) {
+    dragging = false;
+    hintEl.textContent = '';
+  }
+});
+
+function getWebcamCenter() {
+  const sw = canvas.width;
+  const sh = canvas.height;
+  const radius = parseInt(webcamSizeInput.value) / 2;
+  const margin = 24;
+  const pos = positionSelect.value;
+
+  if (pos === 'custom') {
+    return {
+      cx: Math.max(radius, Math.min(sw - radius, customX * sw)),
+      cy: Math.max(radius, Math.min(sh - radius, customY * sh))
+    };
+  }
+
+  let cx, cy;
+  if (pos === 'bottom-right') { cx = sw - margin - radius; cy = sh - margin - radius; }
+  else if (pos === 'bottom-left') { cx = margin + radius; cy = sh - margin - radius; }
+  else if (pos === 'top-right') { cx = sw - margin - radius; cy = margin + radius; }
+  else { cx = margin + radius; cy = margin + radius; }
+  return { cx, cy };
+}
+
+function drawFrame() {
+  if (!screenVideo.srcObject) return;
+
+  const sw = screenVideo.videoWidth || 1280;
+  const sh = screenVideo.videoHeight || 720;
+
+   if (canvas.width !== outputWidth || canvas.height !== outputHeight) {
+    canvas.width = outputWidth;
+    canvas.height = outputHeight;
+  }
+
+  drawScreenComposite(sw, sh);
+
+  if (webcamVisible && webcamVideo.srcObject && webcamVideo.videoWidth > 0) {
+    const radius = parseInt(webcamSizeInput.value) / 2;
+    const { cx, cy } = getWebcamCenter();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+
+    const ww = webcamVideo.videoWidth;
+    const wh = webcamVideo.videoHeight;
+    const aspect = ww / wh;
+    const drawSize = radius * 2;
+    let dw, dh, dx, dy;
+    if (aspect > 1) {
+      dh = drawSize; dw = drawSize * aspect;
+    } else {
+      dw = drawSize; dh = drawSize / aspect;
+    }
+    dx = cx - dw / 2; dy = cy - dh / 2;
+    ctx.drawImage(webcamVideo, dx, dy, dw, dh);
+    ctx.restore();
+
+    // Border
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+  }
+
+  animFrameId = requestAnimationFrame(drawFrame);
+}
+
+function updateOutputSize() {
+  if (outputSelect.value === 'free') {
+    updateFreeOutputSize();
+    return;
+  }
+  const [w, h] = outputSelect.value.split('x').map(Number);
+  outputWidth = w;
+  outputHeight = h;
+  canvas.width = outputWidth;
+  canvas.height = outputHeight;
+}
+
+function updateFreeOutputSize() {
+  const sw = screenVideo.videoWidth || 1920;
+  const sh = screenVideo.videoHeight || 1080;
+  outputWidth = sw;
+  outputHeight = sh;
+  canvas.width = sw;
+  canvas.height = sh;
+}
+
+function getContainRect(srcW, srcH, destW, destH) {
+  const scale = Math.min(destW / srcW, destH / srcH);
+  const width = srcW * scale;
+  const height = srcH * scale;
+  return {
+    x: (destW - width) / 2,
+    y: (destH - height) / 2,
+    width,
+    height,
+  };
+}
+
+function getCoverRect(srcW, srcH, destW, destH) {
+  const scale = Math.max(destW / srcW, destH / srcH);
+  const width = srcW * scale;
+  const height = srcH * scale;
+  return {
+    x: (destW - width) / 2,
+    y: (destH - height) / 2,
+    width,
+    height,
+  };
+}
+
+function drawScreenComposite(sw, sh) {
+  if (outputSelect.value === 'free') {
+    if (canvas.width !== sw || canvas.height !== sh) {
+      updateFreeOutputSize();
+    }
+    ctx.clearRect(0, 0, sw, sh);
+    ctx.drawImage(screenVideo, 0, 0, sw, sh);
+    return;
+  }
+
+  const dw = canvas.width;
+  const dh = canvas.height;
+  const layout = layoutSelect.value;
+
+  ctx.clearRect(0, 0, dw, dh);
+
+  if (layout === 'crop-fill') {
+    const rect = getCoverRect(sw, sh, dw, dh);
+    ctx.drawImage(screenVideo, rect.x, rect.y, rect.width, rect.height);
+    return;
+  }
+
+  if (layout === 'blur-fit') {
+    const bg = getCoverRect(sw, sh, dw, dh);
+    ctx.save();
+    ctx.filter = 'blur(28px) brightness(0.55)';
+    ctx.drawImage(screenVideo, bg.x, bg.y, bg.width, bg.height);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(0, 0, dw, dh);
+  }
+
+  const fit = getContainRect(sw, sh, dw, dh);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillRect(fit.x - 10, fit.y - 10, fit.width + 20, fit.height + 20);
+  ctx.drawImage(screenVideo, fit.x, fit.y, fit.width, fit.height);
+}
+
+outputSelect.addEventListener('change', () => {
+  updateOutputSize();
+  layoutSelect.closest('label').style.display = outputSelect.value === 'free' ? 'none' : '';
+});
+updateOutputSize();
+layoutSelect.closest('label').style.display = outputSelect.value === 'free' ? 'none' : '';
+
+startBtn.addEventListener('click', async () => {
+  try {
+    if (audioContext && audioContext.state === 'suspended') {
+      await audioContext.resume();
+    }
+
+    screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: 30 },
+      audio: true
+    });
+    screenVideo.srcObject = screenStream;
+
+    const camId = webcamSelect.value;
+    if (camId && camId !== 'none') {
+      webcamStream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: camId }, width: 320, height: 320 }
+      });
+      webcamVideo.srcObject = webcamStream;
+      await ensureVideoReady(webcamVideo);
+    } else {
+      webcamVideo.srcObject = null;
+    }
+
+    await ensureVideoReady(screenVideo);
+    drawFrame();
+
+    const canvasStream = canvas.captureStream(30);
+    const mixedAudioStream = await buildMixedAudioStream();
+    mixedAudioStream.getAudioTracks().forEach(t => canvasStream.addTrack(t));
+
+    chunks = [];
+    const mimeType = getBestMimeType();
+    mediaRecorder = new MediaRecorder(canvasStream, { mimeType, videoBitsPerSecond: 5_000_000 });
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      const duration = Date.now() - recordingStartTime;
+      const rawBlob = new Blob(chunks, { type: mimeType });
+      statusEl.textContent = 'Fixing video metadata...';
+      ysFixWebmDuration(rawBlob, duration, (fixedBlob) => {
+        recordingBlob = fixedBlob;
+        downloadBtn.style.display = 'inline-block';
+        statusEl.textContent = `Done! ${(recordingBlob.size / 1024 / 1024).toFixed(1)} MB. Click Download.`;
+      });
+      cleanupStreams();
+    };
+
+    mediaRecorder.start();
+    recordingStartTime = Date.now();
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    downloadBtn.style.display = 'none';
+    statusEl.innerHTML = '<span class="recording-dot"></span>Recording...';
+    hintEl.textContent = 'Drag the webcam bubble to reposition. Toggle, resize, and change layout anytime.';
+
+    screenStream.getVideoTracks()[0].onended = () => stopBtn.click();
+  } catch (err) {
+    statusEl.textContent = `Error: ${err.message}`;
+    cleanupStreams();
+  }
+});
+
+stopBtn.addEventListener('click', () => {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.requestData();
+    mediaRecorder.stop();
+  } else {
+    cleanupStreams();
+  }
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+});
+
+downloadBtn.addEventListener('click', () => {
+  if (!recordingBlob) return;
+  const url = URL.createObjectURL(recordingBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `nocap-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.webm`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+function cleanup() {
+  cleanupStreams();
+}
+
+function cleanupStreams() {
+  if (animFrameId) cancelAnimationFrame(animFrameId);
+  if (screenStream) screenStream.getTracks().forEach(t => t.stop());
+  if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
+  if (mixAudioContext) {
+    try { mixAudioContext.close(); } catch {}
+  }
+  screenVideo.srcObject = null;
+  webcamVideo.srcObject = null;
+  animFrameId = null;
+  mixAudioContext = null;
+  screenStream = null;
+  webcamStream = null;
+}
+
+function getBestMimeType() {
+  const candidates = [
+    'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=vp9,opus',
+    'video/webm'
+  ];
+  return candidates.find(type => MediaRecorder.isTypeSupported(type)) || 'video/webm';
+}
+
+async function buildMixedAudioStream() {
+  const hasScreenAudio = screenStream && screenStream.getAudioTracks().length > 0;
+  const hasMicAudio = micStream && micStream.getAudioTracks().length > 0;
+  if (!hasScreenAudio && !hasMicAudio) return new MediaStream();
+
+  mixAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+  const destination = mixAudioContext.createMediaStreamDestination();
+
+  if (hasScreenAudio) {
+    const screenSource = mixAudioContext.createMediaStreamSource(new MediaStream(screenStream.getAudioTracks()));
+    const screenGain = mixAudioContext.createGain();
+    screenGain.gain.value = 1;
+    screenSource.connect(screenGain).connect(destination);
+  }
+
+  if (hasMicAudio) {
+    const micSource = mixAudioContext.createMediaStreamSource(new MediaStream(micStream.getAudioTracks()));
+    const highpass = mixAudioContext.createBiquadFilter();
+    highpass.type = 'highpass';
+    highpass.frequency.value = 85;
+    const compressor = mixAudioContext.createDynamicsCompressor();
+    compressor.threshold.value = -24;
+    compressor.knee.value = 18;
+    compressor.ratio.value = 3;
+    compressor.attack.value = 0.003;
+    compressor.release.value = 0.2;
+    const micGain = mixAudioContext.createGain();
+    micGain.gain.value = 1.15;
+    micSource.connect(highpass);
+    highpass.connect(compressor);
+    compressor.connect(micGain);
+    micGain.connect(destination);
+  }
+
+  return destination.stream;
+}
+</script>
+</body>
+</html>

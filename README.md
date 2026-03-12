@@ -8,6 +8,8 @@
 
 Record your screen, mic, and system audio into a single video file. No accounts, no cloud, no bloat. Just hit record.
 
+**[Use it in your browser](https://made-by-chris.github.io/nocap/)** — no install needed.
+
 ## Features
 
 - **Screen + audio capture** — system audio and microphone, mixed together

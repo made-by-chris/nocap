@@ -58,6 +58,83 @@
   }
   input[type="range"] { width: 80px; accent-color: #e53e3e; }
   .hint { font-size: 0.75rem; color: #555; }
+  .editor-panel {
+    width: min(900px, 92vw);
+    padding: 12px;
+    border: 1px solid #222;
+    border-radius: 12px;
+    background: #111;
+    display: grid;
+    gap: 10px;
+  }
+  .editor-panel.hidden { display: none; }
+  .editor-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    color: #bbb;
+    font-size: 0.82rem;
+  }
+  .editor-row input[type="range"] { width: min(320px, 60vw); }
+  .editor-row input[type="number"] {
+    width: 84px;
+    background: #1a1a1a;
+    color: #ccc;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 0.8rem;
+  }
+  .editor-preview {
+    width: 100%;
+    max-height: 260px;
+    border-radius: 8px;
+    border: 1px solid #2a2a2a;
+    background: #000;
+  }
+  .zoom-track {
+    width: 100%;
+    border: 1px solid #242424;
+    border-radius: 8px;
+    padding: 8px;
+    display: grid;
+    gap: 8px;
+    background: #0d0d0d;
+  }
+  .zoom-track.hidden { display: none; }
+  .zoom-track-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: #a5a5a5;
+    font-size: 0.78rem;
+    flex-wrap: wrap;
+  }
+  .zoom-segment-list {
+    display: grid;
+    gap: 6px;
+  }
+  .zoom-segment {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 6px;
+    border: 1px solid #1f1f1f;
+    border-radius: 6px;
+    background: #111;
+    color: #bcbcbc;
+    font-size: 0.78rem;
+  }
+  .zoom-segment input[type="range"] { width: 120px; }
+  .zoom-segment button {
+    padding: 5px 10px;
+    font-size: 0.76rem;
+    border-radius: 6px;
+  }
+  .hidden-media { display: none; }
   .mic-indicator {
     display: flex; align-items: center; gap: 8px;
     font-size: 0.8rem; color: #aaa;
@@ -143,12 +220,37 @@
 <div class="status" id="status">Select your screen and webcam, then hit record.</div>
 <div class="hint" id="hint"></div>
 
+<div class="editor-panel hidden" id="editorPanel">
+  <video id="editorPreview" class="editor-preview" controls playsinline></video>
+  <div class="editor-row">
+    <label>Trim start: <span id="trimStartLabel">0:00</span></label>
+    <input type="range" id="trimStart" min="0" max="0" step="0.1" value="0">
+    <button id="setTrimStartBtn" type="button">Set from playhead</button>
+  </div>
+  <div class="editor-row">
+    <label>Trim end: <span id="trimEndLabel">0:00</span></label>
+    <input type="range" id="trimEnd" min="0" max="0" step="0.1" value="0">
+    <button id="setTrimEndBtn" type="button">Set from playhead</button>
+  </div>
+  <div class="editor-row">
+    <label><input type="checkbox" id="includeSystemAudio" checked> Include system audio</label>
+    <label><input type="checkbox" id="includeMicAudio" checked> Include microphone</label>
+  </div>
+  <div class="zoom-track hidden" id="zoomTrack">
+    <div class="zoom-track-header">
+      <span id="zoomTrackStatus">Mouse follow data unavailable for this recording.</span>
+      <button id="addZoomSegmentBtn" type="button" disabled>Add zoom segment</button>
+    </div>
+    <div class="zoom-segment-list" id="zoomSegmentList"></div>
+  </div>
+</div>
+
 <div class="preview-container" id="previewContainer">
   <canvas id="canvas" width="1280" height="720"></canvas>
 </div>
 
-<video id="screenVideo" autoplay muted playsinline style="display:none"></video>
-<video id="webcamVideo" autoplay muted playsinline style="display:none"></video>
+<video id="screenVideo" class="hidden-media" autoplay muted playsinline></video>
+<video id="webcamVideo" class="hidden-media" autoplay muted playsinline></video>
 
 <script>
 const canvas = document.getElementById('canvas');
@@ -171,14 +273,33 @@ const micLabel = document.getElementById('micLabel');
 const micMeterFill = document.getElementById('micMeterFill');
 const outputSelect = document.getElementById('outputSelect');
 const layoutSelect = document.getElementById('layoutSelect');
+const editorPanel = document.getElementById('editorPanel');
+const editorPreview = document.getElementById('editorPreview');
+const trimStartInput = document.getElementById('trimStart');
+const trimEndInput = document.getElementById('trimEnd');
+const trimStartLabel = document.getElementById('trimStartLabel');
+const trimEndLabel = document.getElementById('trimEndLabel');
+const setTrimStartBtn = document.getElementById('setTrimStartBtn');
+const setTrimEndBtn = document.getElementById('setTrimEndBtn');
+const includeSystemAudioInput = document.getElementById('includeSystemAudio');
+const includeMicAudioInput = document.getElementById('includeMicAudio');
+const zoomTrack = document.getElementById('zoomTrack');
+const zoomTrackStatus = document.getElementById('zoomTrackStatus');
+const addZoomSegmentBtn = document.getElementById('addZoomSegmentBtn');
+const zoomSegmentList = document.getElementById('zoomSegmentList');
 
 let mediaRecorder = null;
 let chunks = [];
 let screenStream = null;
 let webcamStream = null;
 let micStream = null;
+let systemStemSession = null;
+let micStemSession = null;
+let systemStemBlob = null;
+let micStemBlob = null;
 let animFrameId = null;
 let recordingBlob = null;
+let editorPreviewUrl = null;
 let recordingStartTime = 0;
 let webcamVisible = false;
 let micMonitorRaf = null;
@@ -188,6 +309,17 @@ let micDataArray = null;
 let mixAudioContext = null;
 let outputWidth = 1920;
 let outputHeight = 1080;
+let exportInProgress = false;
+let stopRequestedByUser = false;
+let mouseTrackSamples = [];
+let mouseTrackTimer = null;
+let mouseTrackStartPerf = 0;
+let mouseSampleInFlight = false;
+let zoomSegments = [];
+let zoomSegmentId = 1;
+const tauriInvoke = window.__TAURI__?.core?.invoke || window.__TAURI_INTERNALS__?.invoke || null;
+const mouseSampleIntervalMs = 50;
+const maxZoomScale = 3.2;
 const hasMediaDevices = typeof navigator !== 'undefined' && !!navigator.mediaDevices;
 const canCaptureDisplay = hasMediaDevices && typeof navigator.mediaDevices.getDisplayMedia === 'function';
 
@@ -204,6 +336,533 @@ function setUnsupportedCaptureState() {
 
 if (!canCaptureDisplay) {
   setUnsupportedCaptureState();
+}
+
+function reportError(context, error) {
+  const message = error?.message || String(error);
+  console.error(`[NoCap] ${context}`, error);
+  statusEl.textContent = `Error: ${message}`;
+}
+
+window.addEventListener('error', (event) => {
+  console.error('[NoCap] Window error', event.error || event.message || event);
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('[NoCap] Unhandled rejection', event.reason || event);
+});
+
+function formatTime(sec) {
+  const clamped = Math.max(0, Number(sec) || 0);
+  const mins = Math.floor(clamped / 60);
+  const seconds = Math.floor(clamped % 60).toString().padStart(2, '0');
+  return `${mins}:${seconds}`;
+}
+
+function updateTrimLabels() {
+  trimStartLabel.textContent = formatTime(trimStartInput.value);
+  trimEndLabel.textContent = formatTime(trimEndInput.value);
+}
+
+function syncTrimBounds(changed) {
+  const start = Number(trimStartInput.value);
+  const end = Number(trimEndInput.value);
+  if (changed === 'start' && start >= end) {
+    trimEndInput.value = (start + 0.1).toFixed(1);
+  }
+  if (changed === 'end' && end <= start) {
+    trimStartInput.value = Math.max(0, end - 0.1).toFixed(1);
+  }
+  updateTrimLabels();
+}
+
+function setEditorRecording(blob) {
+  if (editorPreviewUrl) {
+    URL.revokeObjectURL(editorPreviewUrl);
+    editorPreviewUrl = null;
+  }
+
+  trimStartInput.disabled = true;
+  trimEndInput.disabled = true;
+  setTrimStartBtn.disabled = true;
+  setTrimEndBtn.disabled = true;
+
+  const applyDuration = (durationValue) => {
+    const safeDuration = Math.max(0.1, Number(durationValue) || 0.1);
+    trimStartInput.max = safeDuration.toFixed(1);
+    trimEndInput.max = safeDuration.toFixed(1);
+    trimStartInput.value = '0';
+    trimEndInput.value = safeDuration.toFixed(1);
+    trimStartInput.disabled = false;
+    trimEndInput.disabled = false;
+    setTrimStartBtn.disabled = false;
+    setTrimEndBtn.disabled = false;
+    updateTrimLabels();
+    zoomSegments = [];
+    zoomSegmentId = 1;
+    refreshZoomTrackUi();
+  };
+
+  editorPreview.onloadedmetadata = () => {
+    applyDuration(editorPreview.duration);
+  };
+
+  editorPreviewUrl = URL.createObjectURL(blob);
+  editorPanel.classList.remove('hidden');
+  editorPreview.src = editorPreviewUrl;
+  refreshZoomTrackUi();
+
+  if (editorPreview.readyState >= 1 && Number.isFinite(editorPreview.duration)) {
+    applyDuration(editorPreview.duration);
+  }
+}
+
+function fixWebmDurationSafe(blob, durationMs) {
+  return new Promise(resolve => {
+    if (!(blob instanceof Blob) || blob.size === 0) {
+      resolve(blob);
+      return;
+    }
+
+    if (typeof ysFixWebmDuration !== 'function') {
+      resolve(blob);
+      return;
+    }
+
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value instanceof Blob ? value : blob);
+    };
+
+    const timeoutId = setTimeout(() => {
+      console.warn('[NoCap] Duration fixer timed out, using original blob');
+      done(blob);
+    }, 1800);
+
+    try {
+      ysFixWebmDuration(blob, durationMs, (fixedBlob) => {
+        clearTimeout(timeoutId);
+        done(fixedBlob);
+      });
+    } catch (error) {
+      clearTimeout(timeoutId);
+      console.warn('[NoCap] Duration fixer failed, using original blob', error);
+      done(blob);
+    }
+  });
+}
+
+function getBestAudioMimeType() {
+  const candidates = ['audio/webm;codecs=opus', 'audio/webm'];
+  return candidates.find(type => MediaRecorder.isTypeSupported(type)) || '';
+}
+
+function startAudioStemRecording(stream, kind) {
+  const audioTracks = stream?.getAudioTracks?.() || [];
+  if (!audioTracks.length) return null;
+  const mimeType = getBestAudioMimeType();
+  const recorderStream = new MediaStream([audioTracks[0]]);
+  const options = mimeType ? { mimeType } : undefined;
+  const recorder = options ? new MediaRecorder(recorderStream, options) : new MediaRecorder(recorderStream);
+  const stemChunks = [];
+
+  const done = new Promise(resolve => {
+    recorder.ondataavailable = e => {
+      if (e.data.size > 0) stemChunks.push(e.data);
+    };
+    recorder.onstop = () => {
+      const blobType = mimeType || 'audio/webm';
+      resolve({ kind, blob: new Blob(stemChunks, { type: blobType }) });
+    };
+  });
+
+  recorder.start();
+  return { recorder, done };
+}
+
+async function stopAudioStemRecordings() {
+  const sessions = [systemStemSession, micStemSession].filter(Boolean);
+  for (const session of sessions) {
+    if (session.recorder.state !== 'inactive') {
+      session.recorder.stop();
+    }
+  }
+
+  const results = await Promise.all(sessions.map(session => session.done));
+  for (const result of results) {
+    if (result.kind === 'system') systemStemBlob = result.blob;
+    if (result.kind === 'mic') micStemBlob = result.blob;
+  }
+  systemStemSession = null;
+  micStemSession = null;
+}
+
+function clearStemState() {
+  systemStemBlob = null;
+  micStemBlob = null;
+  systemStemSession = null;
+  micStemSession = null;
+}
+
+function usePlayheadAsTrim(target) {
+  const time = Number(editorPreview.currentTime || 0);
+  if (target === 'start') {
+    trimStartInput.value = Math.min(time, Number(trimEndInput.value) - 0.1).toFixed(1);
+    syncTrimBounds('start');
+  } else {
+    trimEndInput.value = Math.max(time, Number(trimStartInput.value) + 0.1).toFixed(1);
+    syncTrimBounds('end');
+  }
+}
+
+function stopMouseTracking() {
+  if (mouseTrackTimer) {
+    clearInterval(mouseTrackTimer);
+    mouseTrackTimer = null;
+  }
+  mouseSampleInFlight = false;
+}
+
+function clamp01(value) {
+  return Math.max(0, Math.min(1, value));
+}
+
+async function sampleMousePosition() {
+  if (!tauriInvoke || mouseSampleInFlight || !recordingStartTime) return;
+  mouseSampleInFlight = true;
+  try {
+    const position = await tauriInvoke('get_cursor_position');
+    const width = Math.max(1, Number(window.screen?.width) || 1);
+    const height = Math.max(1, Number(window.screen?.height) || 1);
+    const elapsed = Math.max(0, (performance.now() - mouseTrackStartPerf) / 1000);
+    const normalizedX = clamp01((Number(position?.x) || 0) / width);
+    const normalizedY = clamp01((Number(position?.y) || 0) / height);
+    const lastSample = mouseTrackSamples[mouseTrackSamples.length - 1];
+    if (!lastSample || Math.abs(lastSample.x - normalizedX) > 0.0005 || Math.abs(lastSample.y - normalizedY) > 0.0005 || elapsed - lastSample.t >= 0.2) {
+      mouseTrackSamples.push({ t: Number(elapsed.toFixed(3)), x: normalizedX, y: normalizedY });
+    }
+  } catch (mouseErr) {
+    console.warn('[NoCap] Mouse tracking sample failed', mouseErr);
+  } finally {
+    mouseSampleInFlight = false;
+  }
+}
+
+function startMouseTracking() {
+  stopMouseTracking();
+  mouseTrackSamples = [];
+  if (!tauriInvoke) return;
+  mouseTrackStartPerf = performance.now();
+  sampleMousePosition();
+  mouseTrackTimer = setInterval(() => {
+    sampleMousePosition();
+  }, mouseSampleIntervalMs);
+}
+
+function getMousePositionAt(timeSec) {
+  if (!mouseTrackSamples.length) return null;
+  const target = Math.max(0, Number(timeSec) || 0);
+
+  if (target <= mouseTrackSamples[0].t) {
+    return { x: mouseTrackSamples[0].x, y: mouseTrackSamples[0].y };
+  }
+  const last = mouseTrackSamples[mouseTrackSamples.length - 1];
+  if (target >= last.t) {
+    return { x: last.x, y: last.y };
+  }
+
+  for (let i = 1; i < mouseTrackSamples.length; i++) {
+    const prev = mouseTrackSamples[i - 1];
+    const next = mouseTrackSamples[i];
+    if (target <= next.t) {
+      const span = Math.max(0.0001, next.t - prev.t);
+      const mix = (target - prev.t) / span;
+      return {
+        x: prev.x + (next.x - prev.x) * mix,
+        y: prev.y + (next.y - prev.y) * mix,
+      };
+    }
+  }
+  return { x: last.x, y: last.y };
+}
+
+function sanitizeZoomSegment(segment, duration) {
+  const safeDuration = Math.max(0.1, Number(duration) || 0.1);
+  const scale = Math.max(1, Math.min(maxZoomScale, Number(segment.scale) || 1.6));
+  let start = Math.max(0, Math.min(safeDuration - 0.1, Number(segment.start) || 0));
+  let end = Math.max(start + 0.1, Math.min(safeDuration, Number(segment.end) || (start + 2)));
+  if (end - start < 0.1) end = Math.min(safeDuration, start + 0.1);
+  return {
+    id: segment.id,
+    start: Number(start.toFixed(1)),
+    end: Number(end.toFixed(1)),
+    scale: Number(scale.toFixed(2)),
+  };
+}
+
+function refreshZoomTrackUi() {
+  const duration = Number(editorPreview.duration) || Number(trimEndInput.max) || 0;
+  const hasMouseData = mouseTrackSamples.length > 1;
+  zoomTrack.classList.toggle('hidden', !editorPreview.src);
+  addZoomSegmentBtn.disabled = !hasMouseData || duration <= 0;
+
+  if (!editorPreview.src) {
+    zoomTrackStatus.textContent = 'Load a recording to edit zoom-follow segments.';
+    zoomSegmentList.innerHTML = '';
+    return;
+  }
+
+  if (!hasMouseData) {
+    zoomTrackStatus.textContent = 'Mouse follow data unavailable for this recording.';
+    zoomSegmentList.innerHTML = '';
+    return;
+  }
+
+  zoomTrackStatus.textContent = `${zoomSegments.length} zoom segment${zoomSegments.length === 1 ? '' : 's'} on timeline.`;
+  zoomSegmentList.innerHTML = '';
+
+  zoomSegments
+    .slice()
+    .sort((a, b) => a.start - b.start)
+    .forEach((segment) => {
+      const row = document.createElement('div');
+      row.className = 'zoom-segment';
+      row.innerHTML = `
+        <span>Start</span>
+        <input type="number" min="0" max="${duration.toFixed(1)}" step="0.1" value="${segment.start.toFixed(1)}" data-id="${segment.id}" data-field="start">
+        <span>End</span>
+        <input type="number" min="0.1" max="${duration.toFixed(1)}" step="0.1" value="${segment.end.toFixed(1)}" data-id="${segment.id}" data-field="end">
+        <span>Zoom</span>
+        <input type="range" min="1" max="${maxZoomScale}" step="0.05" value="${segment.scale.toFixed(2)}" data-id="${segment.id}" data-field="scale">
+        <span>${segment.scale.toFixed(2)}x</span>
+        <button type="button" data-id="${segment.id}" data-action="set-start">Set start</button>
+        <button type="button" data-id="${segment.id}" data-action="set-end">Set end</button>
+        <button type="button" data-id="${segment.id}" data-action="remove">Remove</button>
+      `;
+      zoomSegmentList.appendChild(row);
+    });
+}
+
+function addZoomSegment(start, end) {
+  const duration = Number(editorPreview.duration) || Number(trimEndInput.max) || 0;
+  if (duration <= 0) return;
+  const nextSegment = sanitizeZoomSegment({
+    id: zoomSegmentId++,
+    start,
+    end,
+    scale: 1.8,
+  }, duration);
+  zoomSegments.push(nextSegment);
+  refreshZoomTrackUi();
+}
+
+function getActiveZoomState(timeSec) {
+  if (!zoomSegments.length) return null;
+  const current = Number(timeSec) || 0;
+  const active = zoomSegments
+    .filter(segment => current >= segment.start && current <= segment.end && segment.scale > 1.01)
+    .sort((a, b) => b.scale - a.scale)[0];
+  if (!active) return null;
+
+  const point = getMousePositionAt(current) || { x: 0.5, y: 0.5 };
+  const edge = Math.min(0.25, Math.max(0.05, (active.end - active.start) * 0.25));
+  let envelope = 1;
+  if (current < active.start + edge) {
+    envelope = (current - active.start) / edge;
+  } else if (current > active.end - edge) {
+    envelope = (active.end - current) / edge;
+  }
+  envelope = Math.max(0, Math.min(1, envelope));
+
+  return {
+    scale: 1 + ((active.scale - 1) * envelope),
+    x: point.x,
+    y: point.y,
+  };
+}
+
+async function seekVideoSafely(video, targetTime) {
+  const epsilon = 0.05;
+  if (Math.abs((video.currentTime || 0) - targetTime) <= epsilon) {
+    return;
+  }
+
+  await new Promise((resolve, reject) => {
+    let timeoutId = null;
+
+    const cleanup = () => {
+      video.removeEventListener('seeked', onSeeked);
+      video.removeEventListener('error', onError);
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+
+    const onSeeked = () => {
+      cleanup();
+      resolve();
+    };
+
+    const onError = () => {
+      cleanup();
+      reject(new Error('Failed to seek recording for export.'));
+    };
+
+    timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error('Timed out while preparing trimmed export.'));
+    }, 3000);
+
+    video.addEventListener('seeked', onSeeked);
+    video.addEventListener('error', onError);
+    video.currentTime = targetTime;
+  });
+}
+
+async function renderEditedRecording() {
+  if (!recordingBlob) return null;
+
+  const fullDuration = Number(editorPreview.duration) || 0;
+  const trimStart = Number(trimStartInput.value) || 0;
+  const trimEnd = Number(trimEndInput.value) || fullDuration;
+  const includeSystem = includeSystemAudioInput.checked && !!systemStemBlob;
+  const includeMic = includeMicAudioInput.checked && !!micStemBlob;
+  const hasTrim = trimStart > 0.05 || (fullDuration > 0 && trimEnd < fullDuration - 0.05);
+  const allAudioEnabled = includeSystemAudioInput.checked && includeMicAudioInput.checked;
+  const hasZoomSegments = zoomSegments.some(segment => segment.scale > 1.01 && (segment.end - segment.start) >= 0.1);
+
+  if (!hasTrim && allAudioEnabled && !hasZoomSegments) {
+    return recordingBlob;
+  }
+
+  const sourceVideo = document.createElement('video');
+  sourceVideo.src = URL.createObjectURL(recordingBlob);
+  sourceVideo.muted = true;
+  sourceVideo.playsInline = true;
+  sourceVideo.preload = 'auto';
+  await new Promise(resolve => {
+    sourceVideo.onloadedmetadata = resolve;
+  });
+
+  const width = sourceVideo.videoWidth || canvas.width;
+  const height = sourceVideo.videoHeight || canvas.height;
+  const exportCanvas = document.createElement('canvas');
+  exportCanvas.width = width;
+  exportCanvas.height = height;
+  const exportCtx = exportCanvas.getContext('2d');
+
+  const exportStream = exportCanvas.captureStream(30);
+  let exportAudioContext = null;
+  const audioElements = [];
+  const objectUrls = [sourceVideo.src];
+
+  if (includeSystem || includeMic) {
+    exportAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const destination = exportAudioContext.createMediaStreamDestination();
+
+    if (includeSystem && systemStemBlob) {
+      const systemAudio = new Audio(URL.createObjectURL(systemStemBlob));
+      systemAudio.preload = 'auto';
+      objectUrls.push(systemAudio.src);
+      const source = exportAudioContext.createMediaElementSource(systemAudio);
+      source.connect(destination);
+      audioElements.push(systemAudio);
+    }
+
+    if (includeMic && micStemBlob) {
+      const micAudio = new Audio(URL.createObjectURL(micStemBlob));
+      micAudio.preload = 'auto';
+      objectUrls.push(micAudio.src);
+      const source = exportAudioContext.createMediaElementSource(micAudio);
+      source.connect(destination);
+      audioElements.push(micAudio);
+    }
+
+    destination.stream.getAudioTracks().forEach(track => exportStream.addTrack(track));
+  }
+
+  const mimeType = getBestMimeType();
+  const rec = new MediaRecorder(exportStream, { mimeType, videoBitsPerSecond: 5_000_000 });
+  const outputChunks = [];
+  rec.ondataavailable = e => {
+    if (e.data.size > 0) outputChunks.push(e.data);
+  };
+
+  await seekVideoSafely(sourceVideo, trimStart);
+  for (const el of audioElements) {
+    el.currentTime = trimStart;
+  }
+
+  const stopAt = Math.max(trimStart + 0.1, trimEnd);
+  let drawRaf = null;
+
+  const stopRender = () => {
+    if (drawRaf) cancelAnimationFrame(drawRaf);
+    if (rec.state !== 'inactive') rec.stop();
+    sourceVideo.pause();
+    audioElements.forEach(el => {
+      try { el.pause(); } catch {}
+    });
+  };
+
+  const draw = () => {
+    if (sourceVideo.readyState >= 2) {
+      const zoom = getActiveZoomState(sourceVideo.currentTime);
+      if (zoom && zoom.scale > 1.01) {
+        const sampleWidth = width / zoom.scale;
+        const sampleHeight = height / zoom.scale;
+        const centerX = Math.max(sampleWidth / 2, Math.min(width - sampleWidth / 2, zoom.x * width));
+        const centerY = Math.max(sampleHeight / 2, Math.min(height - sampleHeight / 2, zoom.y * height));
+        const sx = centerX - sampleWidth / 2;
+        const sy = centerY - sampleHeight / 2;
+        exportCtx.drawImage(sourceVideo, sx, sy, sampleWidth, sampleHeight, 0, 0, width, height);
+      } else {
+        exportCtx.drawImage(sourceVideo, 0, 0, width, height);
+      }
+    }
+    if (sourceVideo.currentTime >= stopAt || sourceVideo.ended) {
+      stopRender();
+      return;
+    }
+    drawRaf = requestAnimationFrame(draw);
+  };
+
+  console.log('[NoCap] Starting export', { trimStart, trimEnd, includeSystem, includeMic });
+  rec.start();
+  await Promise.all([
+    sourceVideo.play(),
+    ...audioElements.map(el => el.play().catch(() => undefined)),
+  ]);
+  draw();
+
+  const expectedDurationMs = Math.max(100, Math.round((stopAt - trimStart) * 1000));
+  setTimeout(() => {
+    stopRender();
+  }, expectedDurationMs + 300);
+
+  const renderedBlob = await new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      stopRender();
+      reject(new Error('Export timed out while rendering.'));
+    }, Math.max(5000, expectedDurationMs * 3));
+
+    rec.onstop = () => {
+      clearTimeout(timeoutId);
+      resolve(new Blob(outputChunks, { type: mimeType }));
+    };
+
+    rec.onerror = event => {
+      clearTimeout(timeoutId);
+      reject(new Error(event?.error?.message || 'MediaRecorder export error.'));
+    };
+  });
+
+  if (exportAudioContext) {
+    try { await exportAudioContext.close(); } catch {}
+  }
+  objectUrls.forEach(url => URL.revokeObjectURL(url));
+  const fixedDuration = Math.round((stopAt - trimStart) * 1000);
+  return fixWebmDurationSafe(renderedBlob, fixedDuration);
 }
 
 async function loadDevices() {
@@ -242,6 +901,7 @@ async function loadDevices() {
   }
 }
 loadDevices();
+refreshZoomTrackUi();
 
 async function ensureVideoReady(videoEl) {
   if (!videoEl.srcObject) return;
@@ -518,6 +1178,62 @@ outputSelect.addEventListener('change', () => {
 updateOutputSize();
 layoutSelect.closest('label').style.display = outputSelect.value === 'free' ? 'none' : '';
 
+trimStartInput.addEventListener('input', () => syncTrimBounds('start'));
+trimEndInput.addEventListener('input', () => syncTrimBounds('end'));
+setTrimStartBtn.addEventListener('click', () => usePlayheadAsTrim('start'));
+setTrimEndBtn.addEventListener('click', () => usePlayheadAsTrim('end'));
+
+addZoomSegmentBtn.addEventListener('click', () => {
+  const playhead = Number(editorPreview.currentTime) || Number(trimStartInput.value) || 0;
+  const start = Math.max(0, playhead);
+  const end = start + 2;
+  addZoomSegment(start, end);
+});
+
+zoomSegmentList.addEventListener('input', (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  const id = Number(target.dataset.id);
+  const field = target.dataset.field;
+  if (!id || !field) return;
+
+  const duration = Number(editorPreview.duration) || Number(trimEndInput.max) || 0;
+  zoomSegments = zoomSegments.map(segment => {
+    if (segment.id !== id) return segment;
+    const updated = { ...segment, [field]: Number(target.value) };
+    return sanitizeZoomSegment(updated, duration);
+  });
+  refreshZoomTrackUi();
+});
+
+zoomSegmentList.addEventListener('click', (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement)) return;
+  const id = Number(target.dataset.id);
+  const action = target.dataset.action;
+  if (!id || !action) return;
+
+  if (action === 'remove') {
+    zoomSegments = zoomSegments.filter(segment => segment.id !== id);
+    refreshZoomTrackUi();
+    return;
+  }
+
+  const duration = Number(editorPreview.duration) || Number(trimEndInput.max) || 0;
+  const playhead = Number(editorPreview.currentTime) || 0;
+  zoomSegments = zoomSegments.map(segment => {
+    if (segment.id !== id) return segment;
+    if (action === 'set-start') {
+      return sanitizeZoomSegment({ ...segment, start: playhead }, duration);
+    }
+    if (action === 'set-end') {
+      return sanitizeZoomSegment({ ...segment, end: playhead }, duration);
+    }
+    return segment;
+  });
+  refreshZoomTrackUi();
+});
+
 startBtn.addEventListener('click', async () => {
   try {
     if (!canCaptureDisplay) {
@@ -529,11 +1245,46 @@ startBtn.addEventListener('click', async () => {
       await audioContext.resume();
     }
 
-    screenStream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: 30 },
-      audio: true
-    });
+    stopRequestedByUser = false;
+
+    editorPanel.classList.add('hidden');
+    if (editorPreviewUrl) {
+      URL.revokeObjectURL(editorPreviewUrl);
+      editorPreviewUrl = null;
+      editorPreview.removeAttribute('src');
+    }
+
+    try {
+      screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 30 },
+        audio: true
+      });
+    } catch (captureWithAudioError) {
+      console.warn('[NoCap] Screen capture with audio failed, retrying video-only capture', captureWithAudioError);
+      screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 30 },
+        audio: false
+      });
+    }
     screenVideo.srcObject = screenStream;
+
+    screenStream.getVideoTracks().forEach((track) => {
+      track.addEventListener('ended', () => {
+        console.error('[NoCap] Screen video track ended', { reason: 'capture failure or user stop' });
+        if (!stopRequestedByUser) {
+          statusEl.textContent = 'Screen capture source ended unexpectedly. Recording is still running, but video may freeze until you stop.';
+        }
+      });
+      track.addEventListener('mute', () => {
+        console.warn('[NoCap] Screen video track muted');
+      });
+    });
+
+    screenStream.getAudioTracks().forEach((track) => {
+      track.addEventListener('ended', () => {
+        console.warn('[NoCap] Screen audio track ended during recording');
+      });
+    });
 
     const camId = webcamSelect.value;
     if (camId && camId !== 'none') {
@@ -553,56 +1304,102 @@ startBtn.addEventListener('click', async () => {
     const mixedAudioStream = await buildMixedAudioStream();
     mixedAudioStream.getAudioTracks().forEach(t => canvasStream.addTrack(t));
 
+    clearStemState();
+    systemStemSession = startAudioStemRecording(screenStream, 'system');
+    micStemSession = startAudioStemRecording(micStream, 'mic');
+
     chunks = [];
     const mimeType = getBestMimeType();
     mediaRecorder = new MediaRecorder(canvasStream, { mimeType, videoBitsPerSecond: 5_000_000 });
     mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-    mediaRecorder.onstop = () => {
-      const duration = Date.now() - recordingStartTime;
-      const rawBlob = new Blob(chunks, { type: mimeType });
-      statusEl.textContent = 'Fixing video metadata...';
-      ysFixWebmDuration(rawBlob, duration, (fixedBlob) => {
-        recordingBlob = fixedBlob;
+    mediaRecorder.onerror = (event) => {
+      reportError('MediaRecorder error', event?.error || event);
+    };
+    mediaRecorder.onstop = async () => {
+      try {
+        const duration = Date.now() - recordingStartTime;
+        const rawBlob = new Blob(chunks, { type: mimeType });
+        statusEl.textContent = 'Fixing video metadata...';
+        recordingBlob = await fixWebmDurationSafe(rawBlob, duration);
+        await stopAudioStemRecordings();
+        includeSystemAudioInput.checked = !!systemStemBlob;
+        includeMicAudioInput.checked = !!micStemBlob;
+        includeSystemAudioInput.disabled = !systemStemBlob;
+        includeMicAudioInput.disabled = !micStemBlob;
+        setEditorRecording(recordingBlob);
         downloadBtn.style.display = 'inline-block';
-        statusEl.textContent = `Done! ${(recordingBlob.size / 1024 / 1024).toFixed(1)} MB. Click Download.`;
-      });
-      cleanupStreams();
+        const mouseStatus = mouseTrackSamples.length > 1
+          ? ` Mouse track captured (${mouseTrackSamples.length} points).`
+          : ' Mouse track unavailable in this runtime.';
+        statusEl.textContent = `Done! ${(recordingBlob.size / 1024 / 1024).toFixed(1)} MB. Trim/audio options are ready.${mouseStatus}`;
+      } catch (stopError) {
+        reportError('Finalizing recording failed', stopError);
+      } finally {
+        cleanupStreams();
+      }
     };
 
     mediaRecorder.start();
     recordingStartTime = Date.now();
+    startMouseTracking();
     startBtn.disabled = true;
     stopBtn.disabled = false;
     downloadBtn.style.display = 'none';
     statusEl.innerHTML = '<span class="recording-dot"></span>Recording...';
     hintEl.textContent = 'Drag the webcam bubble to reposition. Toggle, resize, and change layout anytime.';
 
-    screenStream.getVideoTracks()[0].onended = () => stopBtn.click();
   } catch (err) {
-    statusEl.textContent = `Error: ${err.message}`;
+    reportError('Failed to start recording', err);
     cleanupStreams();
   }
 });
 
 stopBtn.addEventListener('click', () => {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.requestData();
-    mediaRecorder.stop();
-  } else {
+  stopRequestedByUser = true;
+  try {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.requestData();
+      if (systemStemSession?.recorder?.state && systemStemSession.recorder.state !== 'inactive') {
+        systemStemSession.recorder.stop();
+      }
+      if (micStemSession?.recorder?.state && micStemSession.recorder.state !== 'inactive') {
+        micStemSession.recorder.stop();
+      }
+      stopMouseTracking();
+      mediaRecorder.stop();
+    } else {
+      cleanupStreams();
+    }
+  } catch (stopErr) {
+    reportError('Stop recording failed', stopErr);
     cleanupStreams();
   }
   startBtn.disabled = false;
   stopBtn.disabled = true;
 });
 
-downloadBtn.addEventListener('click', () => {
-  if (!recordingBlob) return;
-  const url = URL.createObjectURL(recordingBlob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `nocap-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.webm`;
-  a.click();
-  URL.revokeObjectURL(url);
+downloadBtn.addEventListener('click', async () => {
+  if (!recordingBlob || exportInProgress) return;
+  exportInProgress = true;
+  downloadBtn.disabled = true;
+  statusEl.textContent = 'Exporting trimmed video...';
+
+  try {
+    const outputBlob = await renderEditedRecording();
+    const url = URL.createObjectURL(outputBlob || recordingBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `nocap-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.webm`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 15000);
+    statusEl.textContent = 'Export complete. Download started.';
+  } catch (err) {
+    console.error('[NoCap] Export failed', err);
+    statusEl.textContent = `Export failed: ${err?.message || err}`;
+  } finally {
+    exportInProgress = false;
+    downloadBtn.disabled = false;
+  }
 });
 
 function cleanup() {
@@ -610,6 +1407,7 @@ function cleanup() {
 }
 
 function cleanupStreams() {
+  stopMouseTracking();
   if (animFrameId) cancelAnimationFrame(animFrameId);
   if (screenStream) screenStream.getTracks().forEach(t => t.stop());
   if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
@@ -638,36 +1436,55 @@ async function buildMixedAudioStream() {
   const hasMicAudio = micStream && micStream.getAudioTracks().length > 0;
   if (!hasScreenAudio && !hasMicAudio) return new MediaStream();
 
-  mixAudioContext = new (window.AudioContext || window.webkitAudioContext)();
-  const destination = mixAudioContext.createMediaStreamDestination();
+  try {
+    mixAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const destination = mixAudioContext.createMediaStreamDestination();
 
-  if (hasScreenAudio) {
-    const screenSource = mixAudioContext.createMediaStreamSource(new MediaStream(screenStream.getAudioTracks()));
-    const screenGain = mixAudioContext.createGain();
-    screenGain.gain.value = 1;
-    screenSource.connect(screenGain).connect(destination);
+    const keepAliveOsc = mixAudioContext.createOscillator();
+    const keepAliveGain = mixAudioContext.createGain();
+    keepAliveGain.gain.value = 0.00001;
+    keepAliveOsc.connect(keepAliveGain).connect(destination);
+    keepAliveOsc.start();
+
+    if (hasScreenAudio) {
+      try {
+        const screenSource = mixAudioContext.createMediaStreamSource(new MediaStream(screenStream.getAudioTracks()));
+        const screenGain = mixAudioContext.createGain();
+        screenGain.gain.value = 1;
+        screenSource.connect(screenGain).connect(destination);
+      } catch (screenAudioErr) {
+        console.warn('[NoCap] Failed to attach system audio to mix', screenAudioErr);
+      }
+    }
+
+    if (hasMicAudio) {
+      try {
+        const micSource = mixAudioContext.createMediaStreamSource(new MediaStream(micStream.getAudioTracks()));
+        const highpass = mixAudioContext.createBiquadFilter();
+        highpass.type = 'highpass';
+        highpass.frequency.value = 85;
+        const compressor = mixAudioContext.createDynamicsCompressor();
+        compressor.threshold.value = -24;
+        compressor.knee.value = 18;
+        compressor.ratio.value = 3;
+        compressor.attack.value = 0.003;
+        compressor.release.value = 0.2;
+        const micGain = mixAudioContext.createGain();
+        micGain.gain.value = 1.15;
+        micSource.connect(highpass);
+        highpass.connect(compressor);
+        compressor.connect(micGain);
+        micGain.connect(destination);
+      } catch (micAudioErr) {
+        console.warn('[NoCap] Failed to attach mic audio to mix', micAudioErr);
+      }
+    }
+
+    return destination.stream;
+  } catch (mixErr) {
+    console.warn('[NoCap] Audio mix setup failed, recording video only', mixErr);
+    return new MediaStream();
   }
-
-  if (hasMicAudio) {
-    const micSource = mixAudioContext.createMediaStreamSource(new MediaStream(micStream.getAudioTracks()));
-    const highpass = mixAudioContext.createBiquadFilter();
-    highpass.type = 'highpass';
-    highpass.frequency.value = 85;
-    const compressor = mixAudioContext.createDynamicsCompressor();
-    compressor.threshold.value = -24;
-    compressor.knee.value = 18;
-    compressor.ratio.value = 3;
-    compressor.attack.value = 0.003;
-    compressor.release.value = 0.2;
-    const micGain = mixAudioContext.createGain();
-    micGain.gain.value = 1.15;
-    micSource.connect(highpass);
-    highpass.connect(compressor);
-    compressor.connect(micGain);
-    micGain.connect(destination);
-  }
-
-  return destination.stream;
 }
 </script>
 </body>

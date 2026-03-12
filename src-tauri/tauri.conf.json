@@ -1,13 +1,14 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "NoCap",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "identifier": "com.nocap.recorder",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5511"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "NoCap",

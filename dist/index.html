@@ -315,6 +315,7 @@ let mouseTrackSamples = [];
 let mouseTrackTimer = null;
 let mouseTrackStartPerf = 0;
 let mouseSampleInFlight = false;
+let lastMouseTrackError = '';
 let zoomSegments = [];
 let zoomSegmentId = 1;
 const tauriInvoke = window.__TAURI__?.core?.invoke || window.__TAURI_INTERNALS__?.invoke || null;
@@ -544,6 +545,7 @@ async function sampleMousePosition() {
       mouseTrackSamples.push({ t: Number(elapsed.toFixed(3)), x: normalizedX, y: normalizedY });
     }
   } catch (mouseErr) {
+    lastMouseTrackError = mouseErr?.message || String(mouseErr);
     console.warn('[NoCap] Mouse tracking sample failed', mouseErr);
   } finally {
     mouseSampleInFlight = false;
@@ -553,6 +555,7 @@ async function sampleMousePosition() {
 function startMouseTracking() {
   stopMouseTracking();
   mouseTrackSamples = [];
+  lastMouseTrackError = '';
   if (!tauriInvoke) return;
   mouseTrackStartPerf = performance.now();
   sampleMousePosition();
@@ -615,7 +618,13 @@ function refreshZoomTrackUi() {
   }
 
   if (!hasMouseData) {
-    zoomTrackStatus.textContent = 'Mouse follow data unavailable for this recording.';
+    if (!tauriInvoke) {
+      zoomTrackStatus.textContent = 'Mouse follow needs the desktop app; browser mode cannot read global cursor position.';
+    } else if (lastMouseTrackError) {
+      zoomTrackStatus.textContent = `Mouse follow capture failed (${lastMouseTrackError}).`;
+    } else {
+      zoomTrackStatus.textContent = 'Mouse follow captured no samples. On macOS, grant Accessibility access to NoCap and retry.';
+    }
     zoomSegmentList.innerHTML = '';
     return;
   }

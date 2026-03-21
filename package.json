@@ -2,7 +2,7 @@
   "name": "nocap",
   "private": true,
   "scripts": {
-    "serve": "python -m http.server 5511",
+    "serve": "python3 -m http.server 5511",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"

@@ -223,16 +223,6 @@
 <div class="editor-panel hidden" id="editorPanel">
   <video id="editorPreview" class="editor-preview" controls playsinline></video>
   <div class="editor-row">
-    <label>Trim start: <span id="trimStartLabel">0:00</span></label>
-    <input type="range" id="trimStart" min="0" max="0" step="0.1" value="0">
-    <button id="setTrimStartBtn" type="button">Set from playhead</button>
-  </div>
-  <div class="editor-row">
-    <label>Trim end: <span id="trimEndLabel">0:00</span></label>
-    <input type="range" id="trimEnd" min="0" max="0" step="0.1" value="0">
-    <button id="setTrimEndBtn" type="button">Set from playhead</button>
-  </div>
-  <div class="editor-row">
     <label><input type="checkbox" id="includeSystemAudio" checked> Include system audio</label>
     <label><input type="checkbox" id="includeMicAudio" checked> Include microphone</label>
   </div>
@@ -275,12 +265,6 @@ const outputSelect = document.getElementById('outputSelect');
 const layoutSelect = document.getElementById('layoutSelect');
 const editorPanel = document.getElementById('editorPanel');
 const editorPreview = document.getElementById('editorPreview');
-const trimStartInput = document.getElementById('trimStart');
-const trimEndInput = document.getElementById('trimEnd');
-const trimStartLabel = document.getElementById('trimStartLabel');
-const trimEndLabel = document.getElementById('trimEndLabel');
-const setTrimStartBtn = document.getElementById('setTrimStartBtn');
-const setTrimEndBtn = document.getElementById('setTrimEndBtn');
 const includeSystemAudioInput = document.getElementById('includeSystemAudio');
 const includeMicAudioInput = document.getElementById('includeMicAudio');
 const zoomTrack = document.getElementById('zoomTrack');
@@ -353,52 +337,13 @@ window.addEventListener('unhandledrejection', (event) => {
   console.error('[NoCap] Unhandled rejection', event.reason || event);
 });
 
-function formatTime(sec) {
-  const clamped = Math.max(0, Number(sec) || 0);
-  const mins = Math.floor(clamped / 60);
-  const seconds = Math.floor(clamped % 60).toString().padStart(2, '0');
-  return `${mins}:${seconds}`;
-}
-
-function updateTrimLabels() {
-  trimStartLabel.textContent = formatTime(trimStartInput.value);
-  trimEndLabel.textContent = formatTime(trimEndInput.value);
-}
-
-function syncTrimBounds(changed) {
-  const start = Number(trimStartInput.value);
-  const end = Number(trimEndInput.value);
-  if (changed === 'start' && start >= end) {
-    trimEndInput.value = (start + 0.1).toFixed(1);
-  }
-  if (changed === 'end' && end <= start) {
-    trimStartInput.value = Math.max(0, end - 0.1).toFixed(1);
-  }
-  updateTrimLabels();
-}
-
 function setEditorRecording(blob) {
   if (editorPreviewUrl) {
     URL.revokeObjectURL(editorPreviewUrl);
     editorPreviewUrl = null;
   }
 
-  trimStartInput.disabled = true;
-  trimEndInput.disabled = true;
-  setTrimStartBtn.disabled = true;
-  setTrimEndBtn.disabled = true;
-
-  const applyDuration = (durationValue) => {
-    const safeDuration = Math.max(0.1, Number(durationValue) || 0.1);
-    trimStartInput.max = safeDuration.toFixed(1);
-    trimEndInput.max = safeDuration.toFixed(1);
-    trimStartInput.value = '0';
-    trimEndInput.value = safeDuration.toFixed(1);
-    trimStartInput.disabled = false;
-    trimEndInput.disabled = false;
-    setTrimStartBtn.disabled = false;
-    setTrimEndBtn.disabled = false;
-    updateTrimLabels();
+  const applyDuration = () => {
     zoomSegments = [];
     zoomSegmentId = 1;
     refreshZoomTrackUi();
@@ -507,17 +452,6 @@ function clearStemState() {
   micStemSession = null;
 }
 
-function usePlayheadAsTrim(target) {
-  const time = Number(editorPreview.currentTime || 0);
-  if (target === 'start') {
-    trimStartInput.value = Math.min(time, Number(trimEndInput.value) - 0.1).toFixed(1);
-    syncTrimBounds('start');
-  } else {
-    trimEndInput.value = Math.max(time, Number(trimStartInput.value) + 0.1).toFixed(1);
-    syncTrimBounds('end');
-  }
-}
-
 function stopMouseTracking() {
   if (mouseTrackTimer) {
     clearInterval(mouseTrackTimer);
@@ -606,7 +540,7 @@ function sanitizeZoomSegment(segment, duration) {
 }
 
 function refreshZoomTrackUi() {
-  const duration = Number(editorPreview.duration) || Number(trimEndInput.max) || 0;
+  const duration = Number(editorPreview.duration) || 0;
   const hasMouseData = mouseTrackSamples.length > 1;
   zoomTrack.classList.toggle('hidden', !editorPreview.src);
   addZoomSegmentBtn.disabled = !hasMouseData || duration <= 0;
@@ -655,7 +589,7 @@ function refreshZoomTrackUi() {
 }
 
 function addZoomSegment(start, end) {
-  const duration = Number(editorPreview.duration) || Number(trimEndInput.max) || 0;
+  const duration = Number(editorPreview.duration) || 0;
   if (duration <= 0) return;
   const nextSegment = sanitizeZoomSegment({
     id: zoomSegmentId++,
@@ -692,55 +626,15 @@ function getActiveZoomState(timeSec) {
   };
 }
 
-async function seekVideoSafely(video, targetTime) {
-  const epsilon = 0.05;
-  if (Math.abs((video.currentTime || 0) - targetTime) <= epsilon) {
-    return;
-  }
-
-  await new Promise((resolve, reject) => {
-    let timeoutId = null;
-
-    const cleanup = () => {
-      video.removeEventListener('seeked', onSeeked);
-      video.removeEventListener('error', onError);
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-
-    const onSeeked = () => {
-      cleanup();
-      resolve();
-    };
-
-    const onError = () => {
-      cleanup();
-      reject(new Error('Failed to seek recording for export.'));
-    };
-
-    timeoutId = setTimeout(() => {
-      cleanup();
-      reject(new Error('Timed out while preparing trimmed export.'));
-    }, 3000);
-
-    video.addEventListener('seeked', onSeeked);
-    video.addEventListener('error', onError);
-    video.currentTime = targetTime;
-  });
-}
-
 async function renderEditedRecording() {
   if (!recordingBlob) return null;
 
-  const fullDuration = Number(editorPreview.duration) || 0;
-  const trimStart = Number(trimStartInput.value) || 0;
-  const trimEnd = Number(trimEndInput.value) || fullDuration;
   const includeSystem = includeSystemAudioInput.checked && !!systemStemBlob;
   const includeMic = includeMicAudioInput.checked && !!micStemBlob;
-  const hasTrim = trimStart > 0.05 || (fullDuration > 0 && trimEnd < fullDuration - 0.05);
   const allAudioEnabled = includeSystemAudioInput.checked && includeMicAudioInput.checked;
   const hasZoomSegments = zoomSegments.some(segment => segment.scale > 1.01 && (segment.end - segment.start) >= 0.1);
 
-  if (!hasTrim && allAudioEnabled && !hasZoomSegments) {
+  if (allAudioEnabled && !hasZoomSegments) {
     return recordingBlob;
   }
 
@@ -797,12 +691,12 @@ async function renderEditedRecording() {
     if (e.data.size > 0) outputChunks.push(e.data);
   };
 
-  await seekVideoSafely(sourceVideo, trimStart);
+  sourceVideo.currentTime = 0;
   for (const el of audioElements) {
-    el.currentTime = trimStart;
+    el.currentTime = 0;
   }
 
-  const stopAt = Math.max(trimStart + 0.1, trimEnd);
+  const stopAt = Math.max(0.1, sourceVideo.duration || Number(editorPreview.duration) || 0.1);
   let drawRaf = null;
 
   const stopRender = () => {
@@ -836,7 +730,7 @@ async function renderEditedRecording() {
     drawRaf = requestAnimationFrame(draw);
   };
 
-  console.log('[NoCap] Starting export', { trimStart, trimEnd, includeSystem, includeMic });
+  console.log('[NoCap] Starting export', { includeSystem, includeMic });
   rec.start();
   await Promise.all([
     sourceVideo.play(),
@@ -844,7 +738,7 @@ async function renderEditedRecording() {
   ]);
   draw();
 
-  const expectedDurationMs = Math.max(100, Math.round((stopAt - trimStart) * 1000));
+  const expectedDurationMs = Math.max(100, Math.round(stopAt * 1000));
   setTimeout(() => {
     stopRender();
   }, expectedDurationMs + 300);
@@ -870,7 +764,7 @@ async function renderEditedRecording() {
     try { await exportAudioContext.close(); } catch {}
   }
   objectUrls.forEach(url => URL.revokeObjectURL(url));
-  const fixedDuration = Math.round((stopAt - trimStart) * 1000);
+  const fixedDuration = Math.round(stopAt * 1000);
   return fixWebmDurationSafe(renderedBlob, fixedDuration);
 }
 
@@ -1187,13 +1081,8 @@ outputSelect.addEventListener('change', () => {
 updateOutputSize();
 layoutSelect.closest('label').style.display = outputSelect.value === 'free' ? 'none' : '';
 
-trimStartInput.addEventListener('input', () => syncTrimBounds('start'));
-trimEndInput.addEventListener('input', () => syncTrimBounds('end'));
-setTrimStartBtn.addEventListener('click', () => usePlayheadAsTrim('start'));
-setTrimEndBtn.addEventListener('click', () => usePlayheadAsTrim('end'));
-
 addZoomSegmentBtn.addEventListener('click', () => {
-  const playhead = Number(editorPreview.currentTime) || Number(trimStartInput.value) || 0;
+  const playhead = Number(editorPreview.currentTime) || 0;
   const start = Math.max(0, playhead);
   const end = start + 2;
   addZoomSegment(start, end);
@@ -1206,7 +1095,7 @@ zoomSegmentList.addEventListener('input', (event) => {
   const field = target.dataset.field;
   if (!id || !field) return;
 
-  const duration = Number(editorPreview.duration) || Number(trimEndInput.max) || 0;
+  const duration = Number(editorPreview.duration) || 0;
   zoomSegments = zoomSegments.map(segment => {
     if (segment.id !== id) return segment;
     const updated = { ...segment, [field]: Number(target.value) };
@@ -1228,7 +1117,7 @@ zoomSegmentList.addEventListener('click', (event) => {
     return;
   }
 
-  const duration = Number(editorPreview.duration) || Number(trimEndInput.max) || 0;
+  const duration = Number(editorPreview.duration) || 0;
   const playhead = Number(editorPreview.currentTime) || 0;
   zoomSegments = zoomSegments.map(segment => {
     if (segment.id !== id) return segment;
@@ -1340,7 +1229,7 @@ startBtn.addEventListener('click', async () => {
         const mouseStatus = mouseTrackSamples.length > 1
           ? ` Mouse track captured (${mouseTrackSamples.length} points).`
           : ' Mouse track unavailable in this runtime.';
-        statusEl.textContent = `Done! ${(recordingBlob.size / 1024 / 1024).toFixed(1)} MB. Trim/audio options are ready.${mouseStatus}`;
+        statusEl.textContent = `Done! ${(recordingBlob.size / 1024 / 1024).toFixed(1)} MB. Audio options are ready.${mouseStatus}`;
       } catch (stopError) {
         reportError('Finalizing recording failed', stopError);
       } finally {
@@ -1391,7 +1280,7 @@ downloadBtn.addEventListener('click', async () => {
   if (!recordingBlob || exportInProgress) return;
   exportInProgress = true;
   downloadBtn.disabled = true;
-  statusEl.textContent = 'Exporting trimmed video...';
+  statusEl.textContent = 'Exporting video...';
 
   try {
     const outputBlob = await renderEditedRecording();
